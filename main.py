@@ -101,6 +101,12 @@ def main():
     client = TelegramClient(StringSession(TG_SESSION), TG_API_ID, TG_API_HASH)
 
     with client:
+        # أول تشغيل فقط (ما فيه last_id.json محفوظ): ابدأ من آخر 5 منشورات بس، مو كل التاريخ
+        if last_id == 0:
+            latest = client.get_messages(SOURCE_CHANNEL, limit=1)
+            if latest:
+                last_id = max(latest[0].id - 5, 0)
+
         messages = list(client.iter_messages(SOURCE_CHANNEL, min_id=last_id, reverse=True))
         new_last_id = last_id
 
