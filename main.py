@@ -77,7 +77,11 @@ def process_with_gemini(text):
 
 def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": TARGET_CHANNEL, "text": text})
+    requests.post(url, data={
+        "chat_id": TARGET_CHANNEL,
+        "text": text,
+        "disable_web_page_preview": True,
+    })
 
 
 def send_photo(file_path, caption):
