@@ -20,6 +20,7 @@ TARGET_CHANNEL = os.environ["TARGET_CHANNEL"]  # مثال: @ShakoMakoKirkuk
 
 STATE_FILE = "last_id.json"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent"
+MAX_UPLOAD_SIZE = 45 * 1024 * 1024  # هامش أمان تحت حد Bot API (~50 ميجا)
 
 
 def load_last_id():
@@ -77,29 +78,46 @@ def process_with_gemini(text):
 
 def send_text(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
+    r = requests.post(url, data={
         "chat_id": TARGET_CHANNEL,
         "text": text,
         "disable_web_page_preview": True,
     })
+    r.raise_for_status()
 
 
 def send_photo(file_path, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
     with open(file_path, "rb") as f:
-        requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"photo": f})
+        r = requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"photo": f})
+    r.raise_for_status()
 
 
 def send_video(file_path, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVideo"
     with open(file_path, "rb") as f:
-        requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"video": f})
+        r = requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"video": f})
+    r.raise_for_status()
 
 
 def send_document(file_path, caption):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
     with open(file_path, "rb") as f:
-        requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"document": f})
+        r = requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"document": f})
+    r.raise_for_status()
+
+
+def relay_large_media(client, msg):
+    """
+    لملف/فيديو أكبر من حد الرفع: نمرره مباشرة عبر الحساب الشخصي بدون تحميل/رفع،
+    مع إخفاء اسم/قناة المصدر (drop_author). يحتاج الحساب الشخصي أدمن بقناة الهدف.
+    """
+    client.forward_messages(
+        entity=TARGET_CHANNEL,
+        messages=msg,
+        from_peer=SOURCE_CHANNEL,
+        drop_author=True,
+    )
 
 
 def main():
@@ -125,23 +143,38 @@ def main():
 
             text = (msg.message or "").strip()
 
-            # تجاهل الرسائل الفارغة من نص بالكامل (صورة بدون تعليق مثلاً)
-            if not text:
+            # تجاهل الرسائل الفارغة تماماً (لا نص ولا وسائط)
+            if not text and not msg.media:
                 continue
 
+            if text:
+                try:
+                    is_ad, rewritten = process_with_gemini(text)
+                except Exception as e:
+                    print(f"خطأ بمعالجة الرسالة {msg.id}: {e}")
+                    continue
+
+                if is_ad:
+                    continue  # تجاهل الإعلانات
+
+                if not rewritten and not msg.media:
+                    continue  # نص فقط وفشلت الصياغة ولا فيه وسائط تستحق النشر
+
+                final_text = f"{rewritten}\n\n{CHANNEL_LINK}" if rewritten else CHANNEL_LINK
+            else:
+                # وسائط بدون أي نص (مثل ملف PDF بدون تعليق) — انشرها مع رابط القناة فقط
+                final_text = CHANNEL_LINK
+
             try:
-                is_ad, rewritten = process_with_gemini(text)
-            except Exception as e:
-                print(f"خطأ بمعالجة الرسالة {msg.id}: {e}")
-                continue
-
-            if is_ad or not rewritten:
-                continue  # تجاهل الإعلانات
-
-            final_text = f"{rewritten}\n\n{CHANNEL_LINK}"
+                media_size = msg.file.size if msg.file else 0
+            except Exception:
+                media_size = 0
 
             try:
-                if msg.photo:
+                if media_size and media_size > MAX_UPLOAD_SIZE:
+                    # ملف/فيديو كبير: تمرير مباشر بدون تحميل، مع إخفاء اسم المرسل
+                    relay_large_media(client, msg)
+                elif msg.photo:
                     file_path = client.download_media(msg, file="temp_media")
                     send_photo(file_path, final_text)
                     os.remove(file_path)
