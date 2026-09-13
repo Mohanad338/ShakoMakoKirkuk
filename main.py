@@ -96,6 +96,12 @@ def send_video(file_path, caption):
         requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"video": f})
 
 
+def send_document(file_path, caption):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    with open(file_path, "rb") as f:
+        requests.post(url, data={"chat_id": TARGET_CHANNEL, "caption": caption}, files={"document": f})
+
+
 def main():
     last_id = load_last_id()
     client = TelegramClient(StringSession(TG_SESSION), TG_API_ID, TG_API_HASH)
@@ -142,6 +148,10 @@ def main():
                 elif msg.video:
                     file_path = client.download_media(msg, file="temp_media")
                     send_video(file_path, final_text)
+                    os.remove(file_path)
+                elif msg.document or msg.audio or msg.voice:
+                    file_path = client.download_media(msg, file="temp_media")
+                    send_document(file_path, final_text)
                     os.remove(file_path)
                 else:
                     send_text(final_text)
